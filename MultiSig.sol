@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 /**
  * @title MultiSigWallet
@@ -10,40 +10,46 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 contract MultiSigWallet is AccessControl {
     bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
 
-    event SubmitTransaction(address indexed owner, uint256 indexed txIndex, address indexed to, uint256 value, bytes data);
+    event SubmitTransaction(address indexed owner, uint256 indexed txIndex, address indexed to, bytes data);
     event ConfirmTransaction(address indexed owner, uint256 indexed txIndex);
     event RevokeConfirmation(address indexed owner, uint256 indexed txIndex);
-    event ExecuteTransaction(address indexed owner, uint256 indexed txIndex);
+    event SubmitToTimelock(address indexed owner, uint256 indexed txIndex);
 
     struct Transaction {
-        address to;
-        uint256 value;
-        bytes data;
-        bool executed;
-        uint256 numConfirmations;
+        address to; // Recipient address of the transaction
+        bytes data; // Data payload of the transaction
+        bool submitted; // Indicates if the transaction has been submitted to Timelock
+        uint256 numConfirmations; // Number of confirmations received for the transaction
     }
 
+    // Mapping to track confirmations for transactions
     mapping(uint256 => mapping(address => bool)) public isConfirmed;
+    // Array to store transaction data
     Transaction[] public transactions;
+    // Number of confirmations required for transaction execution
     uint256 public numConfirmationsRequired;
 
+    // Modifier to restrict access to only contract owners
     modifier onlyOwner() {
-        require(hasRole(OWNER_ROLE, msg.sender), "not owner");
+        require(hasRole(OWNER_ROLE, msg.sender), "Only owners can call this function");
         _;
     }
 
+    // Modifier to check if a transaction exists
     modifier txExists(uint256 _txIndex) {
-        require(_txIndex < transactions.length, "tx does not exist");
+        require(_txIndex < transactions.length, "Transaction does not exist");
         _;
     }
 
-    modifier notExecuted(uint256 _txIndex) {
-        require(!transactions[_txIndex].executed, "tx already executed");
+    // Modifier to check if a transaction has not been submitted to Timelock
+    modifier notSubmitted(uint256 _txIndex) {
+        require(!transactions[_txIndex].submitted, "Transaction already submitted");
         _;
     }
 
+    // Modifier to check if a transaction has not been confirmed
     modifier notConfirmed(uint256 _txIndex) {
-        require(!isConfirmed[_txIndex][msg.sender], "tx already confirmed");
+        require(!isConfirmed[_txIndex][msg.sender], "Transaction already confirmed");
         _;
     }
 
@@ -53,37 +59,39 @@ contract MultiSigWallet is AccessControl {
      * @param _numConfirmationsRequired Number of confirmations required for transaction execution.
      */
     constructor(address[] memory _owners, uint256 _numConfirmationsRequired) {
-        require(_owners.length > 0, "owners required");
+        require(_owners.length > 0, "At least one owner is required");
         require(
             _numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length,
-            "invalid number of required confirmations"
+            "Invalid number of required confirmations"
         );
 
+        // Set up access control roles
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setRoleAdmin(OWNER_ROLE, DEFAULT_ADMIN_ROLE);
 
-        // Check for unique owners' addresses
+        // Check for unique owners' addresses and grant owner role
         for (uint256 i = 0; i < _owners.length; i++) {
-            require(_owners[i] != address(0), "invalid owner");
-            require(!hasRole(OWNER_ROLE, _owners[i]), "owner not unique");
+            require(_owners[i] != address(0), "Invalid owner address");
+            require(!hasRole(OWNER_ROLE, _owners[i]), "Owner address not unique");
             grantRole(OWNER_ROLE, _owners[i]);
         }
 
+        // Set the required number of confirmations
         numConfirmationsRequired = _numConfirmationsRequired;
     }
 
     /**
      * @dev Submits a transaction for approval.
      * @param _to Recipient address of the transaction.
-     * @param _value Amount of Ether to send in the transaction.
      */
-    function submitTransaction(address _to, uint256 _value) public onlyRole(OWNER_ROLE) {
+    function submitTransaction(address _to) public onlyRole(OWNER_ROLE) {
         uint256 txIndex = transactions.length;
         bytes memory withdrawData = abi.encodeWithSignature("withdraw()");
 
-        transactions.push(Transaction({to: _to, value: _value, data: withdrawData, executed: false, numConfirmations: 0}));
+        // Add transaction to the transactions array
+        transactions.push(Transaction({to: _to, data: withdrawData, submitted: false, numConfirmations: 0}));
 
-        emit SubmitTransaction(msg.sender, txIndex, _to, _value, withdrawData);
+        emit SubmitTransaction(msg.sender, txIndex, _to, withdrawData);
     }
 
     /**
@@ -92,7 +100,7 @@ contract MultiSigWallet is AccessControl {
      */
     function confirmTransaction(
         uint256 _txIndex
-    ) public onlyRole(OWNER_ROLE) txExists(_txIndex) notExecuted(_txIndex) notConfirmed(_txIndex) {
+    ) public onlyRole(OWNER_ROLE) txExists(_txIndex) notSubmitted(_txIndex) notConfirmed(_txIndex) {
         Transaction storage transaction = transactions[_txIndex];
         transaction.numConfirmations += 1;
         isConfirmed[_txIndex][msg.sender] = true;
@@ -101,30 +109,37 @@ contract MultiSigWallet is AccessControl {
     }
 
     /**
-     * @dev Executes a confirmed transaction.
+     * @dev Submits a confirmed transaction to TimeLock queue.
      * @param _txIndex Index of the transaction to execute.
+     * @param _timeLockAddress Address of the TimeLock contract.
      */
-    function executeTransaction(uint256 _txIndex) public onlyRole(OWNER_ROLE) txExists(_txIndex) notExecuted(_txIndex) {
+    function submitToTimelock(
+        uint256 _txIndex,
+        address _timeLockAddress
+    ) public onlyRole(OWNER_ROLE) txExists(_txIndex) notSubmitted(_txIndex) {
         Transaction storage transaction = transactions[_txIndex];
 
-        require(transaction.numConfirmations >= numConfirmationsRequired, "Min 3 confirmations required");
+        require(transaction.numConfirmations >= numConfirmationsRequired, "Minimum confirmations required");
 
-        transaction.executed = true;
+        transaction.submitted = true;
 
-        (bool success, ) = transaction.to.call{value: transaction.value}(transaction.data);
-        require(success, "tx failed");
+        // Call the submitTransaction function of the TimeLock contract using .call()
+        (bool success, ) = _timeLockAddress.call{value: 0, gas: 100000}(
+            abi.encodeWithSignature("submitTransaction(address,bytes)", transaction.to, transaction.data)
+        );
+        require(success, "Call to TimeLock submitTransaction failed");
 
-        emit ExecuteTransaction(msg.sender, _txIndex);
+        emit SubmitToTimelock(msg.sender, _txIndex);
     }
 
     /**
      * @dev Revokes a previously confirmed transaction.
      * @param _txIndex Index of the transaction to revoke confirmation from.
      */
-    function revokeConfirmation(uint256 _txIndex) public onlyRole(OWNER_ROLE) txExists(_txIndex) notExecuted(_txIndex) {
+    function revokeConfirmation(uint256 _txIndex) public onlyRole(OWNER_ROLE) txExists(_txIndex) notSubmitted(_txIndex) {
         Transaction storage transaction = transactions[_txIndex];
 
-        require(isConfirmed[_txIndex][msg.sender], "tx not confirmed");
+        require(isConfirmed[_txIndex][msg.sender], "Transaction not confirmed");
 
         transaction.numConfirmations -= 1;
         isConfirmed[_txIndex][msg.sender] = false;
@@ -144,21 +159,15 @@ contract MultiSigWallet is AccessControl {
      * @dev Retrieves details of a specific transaction.
      * @param _txIndex Index of the transaction to retrieve details for.
      * @return to Recipient address of the transaction.
-     * @return value Amount of Ether sent in the transaction.
      * @return data Data payload of the transaction.
-     * @return executed True if the transaction has been executed, false otherwise.
+     * @return submitted True if the transaction has been submitted to the TimeLock, false otherwise.
      * @return numConfirmations Number of confirmations received for the transaction.
      */
     function getTransaction(
         uint256 _txIndex
-    )
-        public
-        view
-        txExists(_txIndex)
-        returns (address to, uint256 value, bytes memory data, bool executed, uint256 numConfirmations)
-    {
+    ) public view txExists(_txIndex) returns (address to, bytes memory data, bool submitted, uint256 numConfirmations) {
         Transaction storage transaction = transactions[_txIndex];
 
-        return (transaction.to, transaction.value, transaction.data, transaction.executed, transaction.numConfirmations);
+        return (transaction.to, transaction.data, transaction.submitted, transaction.numConfirmations);
     }
 }
