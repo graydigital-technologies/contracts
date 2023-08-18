@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title VaultBSC
@@ -12,8 +12,8 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  */
 contract VaultBSC is Ownable {
     struct Token {
-        address token;         // Address of the ERC20 token contract
-        uint256 totalDeposit;  // Total amount of this token deposited
+        address token; // Address of the ERC20 token contract
+        uint256 totalDeposit; // Total amount of this token deposited
     }
 
     mapping(uint256 => Token) public tokenType;
@@ -22,15 +22,15 @@ contract VaultBSC is Ownable {
 
     address payable public immutable receiver;
 
-    address public immutable multisig;
+    address public immutable timeLock;
 
     uint256 public constant MAX_REGISTERED_TOKENS = 3;
 
     /**
-     * @dev Modifier to ensure that only the multisig contract can call certain functions.
+     * @dev Modifier to ensure that only the timeLock contract can call certain functions.
      */
-    modifier onlyMultisig() {
-        require(msg.sender == multisig, "Caller not multisig contract");
+    modifier onlyTimeLock() {
+        require(msg.sender == timeLock, "Caller not TimeLock contract");
         _;
     }
 
@@ -47,15 +47,15 @@ contract VaultBSC is Ownable {
      * @dev Constructor to initialize the VaultBSC contract.
      * @param _token An array of addresses representing the ERC20 token contracts for each registered token type.
      * @param _receiver The address that will receive withdrawal transfers.
-     * @param _multisig The address of the multisignature contract for managing the vault.
+     * @param _timeLock The address of the timeLock contract for managing the vault.
      */
-    constructor(address[MAX_REGISTERED_TOKENS] memory _token, address payable _receiver, address _multisig) {
+    constructor(address[MAX_REGISTERED_TOKENS] memory _token, address payable _receiver, address _timeLock) {
         require(_receiver != address(0), "Zero address not allowed");
         for (uint i = 0; i < MAX_REGISTERED_TOKENS; i++) {
             tokenType[i].token = _token[i];
         }
         receiver = _receiver;
-        multisig = _multisig;
+        timeLock = _timeLock;
     }
 
     /**
@@ -80,9 +80,9 @@ contract VaultBSC is Ownable {
     }
 
     /**
-     * @dev Function to withdraw funds from the vault (only callable by the multisig contract).
+     * @dev Function to withdraw funds from the vault (only callable by the timeLock contract).
      */
-    function withdraw() public onlyMultisig {
+    function withdraw() public onlyTimeLock {
         for (uint256 i = 0; i < MAX_REGISTERED_TOKENS; i++) {
             uint256 balance = IERC20(tokenType[i].token).balanceOf(address(this));
             if (balance > 0) {
