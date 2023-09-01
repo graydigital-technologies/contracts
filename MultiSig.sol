@@ -64,11 +64,7 @@ contract MultiSigWallet is AccessControl {
             _numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length,
             "Invalid number of required confirmations"
         );
-
-        // Set up access control roles
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setRoleAdmin(OWNER_ROLE, DEFAULT_ADMIN_ROLE);
-
+        
         // Check for unique owners' addresses and grant owner role
         for (uint256 i = 0; i < _owners.length; i++) {
             require(_owners[i] != address(0), "Invalid owner address");
@@ -84,7 +80,7 @@ contract MultiSigWallet is AccessControl {
      * @dev Submits a transaction for approval.
      * @param _to Recipient address of the transaction.
      */
-    function submitTransaction(address _to) public onlyRole(OWNER_ROLE) {
+    function submitTransaction(address _to) public onlyOwner {
         uint256 txIndex = transactions.length;
         bytes memory withdrawData = abi.encodeWithSignature("withdraw()");
 
@@ -100,7 +96,7 @@ contract MultiSigWallet is AccessControl {
      */
     function confirmTransaction(
         uint256 _txIndex
-    ) public onlyRole(OWNER_ROLE) txExists(_txIndex) notSubmitted(_txIndex) notConfirmed(_txIndex) {
+    ) public onlyOwner txExists(_txIndex) notSubmitted(_txIndex) notConfirmed(_txIndex) {
         Transaction storage transaction = transactions[_txIndex];
         transaction.numConfirmations += 1;
         isConfirmed[_txIndex][msg.sender] = true;
@@ -116,7 +112,7 @@ contract MultiSigWallet is AccessControl {
     function submitToTimelock(
         uint256 _txIndex,
         address _timeLockAddress
-    ) public onlyRole(OWNER_ROLE) txExists(_txIndex) notSubmitted(_txIndex) {
+    ) public onlyOwner txExists(_txIndex) notSubmitted(_txIndex) {
         Transaction storage transaction = transactions[_txIndex];
 
         require(transaction.numConfirmations >= numConfirmationsRequired, "Minimum confirmations required");
@@ -136,7 +132,7 @@ contract MultiSigWallet is AccessControl {
      * @dev Revokes a previously confirmed transaction.
      * @param _txIndex Index of the transaction to revoke confirmation from.
      */
-    function revokeConfirmation(uint256 _txIndex) public onlyRole(OWNER_ROLE) txExists(_txIndex) notSubmitted(_txIndex) {
+    function revokeConfirmation(uint256 _txIndex) public onlyOwner txExists(_txIndex) notSubmitted(_txIndex) {
         Transaction storage transaction = transactions[_txIndex];
 
         require(isConfirmed[_txIndex][msg.sender], "Transaction not confirmed");
