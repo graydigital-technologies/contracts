@@ -53,6 +53,12 @@ contract MultiSigWallet is AccessControl {
         _;
     }
 
+    // Modifier to check if the sender is the current admin
+    modifier onlyAdmin() {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Only admin can call this function");
+        _;
+    }
+
     /**
      * @dev Constructor to initialize the contract with owners and required confirmations.
      * @param _owners Array of owner addresses.
@@ -64,7 +70,11 @@ contract MultiSigWallet is AccessControl {
             _numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length,
             "Invalid number of required confirmations"
         );
-        
+
+        // Set up access control roles
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setRoleAdmin(OWNER_ROLE, DEFAULT_ADMIN_ROLE);
+
         // Check for unique owners' addresses and grant owner role
         for (uint256 i = 0; i < _owners.length; i++) {
             require(_owners[i] != address(0), "Invalid owner address");
@@ -165,5 +175,16 @@ contract MultiSigWallet is AccessControl {
         Transaction storage transaction = transactions[_txIndex];
 
         return (transaction.to, transaction.data, transaction.submitted, transaction.numConfirmations);
+    }
+
+    // Function to transfer DEFAULT_ADMIN_ROLE
+    function transferAdminRole() public onlyAdmin {
+        require(!hasRole(DEFAULT_ADMIN_ROLE, address(this)), "Admin role already set");
+
+        // Grant DEFAULT_ADMIN_ROLE to the new admin(current contract address)
+        grantRole(DEFAULT_ADMIN_ROLE, address(this));
+
+        // Revoke DEFAULT_ADMIN_ROLE from the current admin (msg.sender)
+        revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 }
